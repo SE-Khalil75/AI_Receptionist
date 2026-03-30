@@ -1,0 +1,35 @@
+# Environment files (contain secrets)
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Google service account credentials (contain private keys)
+backend/google_calendar_credentials.json
+google_calendar_credentials.json
+*credentials*.json
+*service_account*.json
+
+# Claude AI memory (local only)
+.claude/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Build outputs
+dist/
+build/
+.next/
+
+# OS
+.DS_Store
+Thumbs.db
