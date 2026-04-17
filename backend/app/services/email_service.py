@@ -16,17 +16,23 @@ logger = logging.getLogger(__name__)
 # ── Token helpers ──────────────────────────────────────────────────────────────
 
 def _make_token(appointment_id: str, action: str) -> str:
-    """Return an HMAC-SHA256 token for the given appointment + action."""
+    """Return an HMAC-SHA256 token for the given appointment + action.
+    Padding (=) is stripped — base64url does not require it and = in URLs
+    is corrupted by Gmail's link-rewriting and some email clients.
+    """
     msg = f"{appointment_id}:{action}".encode()
     sig = hmac.new(settings.confirmation_secret.encode(), msg, hashlib.sha256).digest()
     import base64
-    return base64.urlsafe_b64encode(sig).decode()
+    return base64.urlsafe_b64encode(sig).decode().rstrip("=")
 
 
 def verify_token(appointment_id: str, action: str, token: str) -> bool:
-    """Return True if the token is valid for this appointment + action."""
-    expected = _make_token(appointment_id, action)
-    return hmac.compare_digest(expected, token)
+    """Return True if the token is valid for this appointment + action.
+    Strips any = padding from the received token so that tokens generated
+    by older code (with padding) still verify correctly.
+    """
+    expected = _make_token(appointment_id, action)          # never has =
+    return hmac.compare_digest(expected, token.rstrip("=")) # strip if present
 
 
 # ── Email sending ──────────────────────────────────────────────────────────────
@@ -51,10 +57,11 @@ def send_confirmation_email(
 
     confirm_token = _make_token(appointment_id, "confirm")
     cancel_token = _make_token(appointment_id, "cancel")
-    base = settings.public_base_url
-
-    confirm_url = f"{base}/confirm/{appointment_id}?action=confirm&token={confirm_token}"
-    cancel_url = f"{base}/confirm/{appointment_id}?action=cancel&token={cancel_token}"
+    # Point directly to the backend — add ngrok-skip-browser-warning so the
+    # ngrok interstitial is bypassed without needing a frontend proxy hop.
+    backend_base = settings.public_base_url.rstrip("/")
+    confirm_url = f"{backend_base}/confirm/{appointment_id}?action=confirm&token={confirm_token}&ngrok-skip-browser-warning=true"
+    cancel_url = f"{backend_base}/confirm/{appointment_id}?action=cancel&token={cancel_token}&ngrok-skip-browser-warning=true"
 
     subject = f"Appointment Request – {business_name}"
 
@@ -73,7 +80,7 @@ def send_confirmation_email(
     .detail strong {{ display: inline-block; width: 110px; color: #555; }}
     .btn {{ display: inline-block; padding: 14px 28px; border-radius: 6px; text-decoration: none;
             font-weight: bold; font-size: 15px; margin: 8px 8px 8px 0; }}
-    .btn-confirm {{ background: #1a56db; color: #fff; }}
+    .btn-confirm {{ background: #16a34a; color: #ffffff; }}
     .btn-cancel  {{ background: #fff; color: #e02424; border: 2px solid #e02424; }}
     .footer {{ margin-top: 32px; font-size: 12px; color: #999; }}
   </style>

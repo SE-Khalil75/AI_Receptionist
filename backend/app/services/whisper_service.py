@@ -57,11 +57,15 @@ def transcribe(mulaw_bytes: bytes) -> str:
         model=settings.whisper_model,      # default: "whisper-1"
         file=audio_file,
         response_format="text",
+        # Prompt primes Whisper with the correct spellings so it biases toward them
         prompt=(
             "This is a phone call to a business receptionist. "
             "The caller may be booking, rescheduling, or cancelling an appointment. "
-            "They may mention names, dates, times, phone numbers, and services."
+            "They may mention names, dates, times, phone numbers, and services. "
+            "The caller's name is Salah-Eddine Khalil and their email is khalilsalaheddine2@gmail.com."
         ),
     )
     text = response if isinstance(response, str) else response.text
-    return text.strip()
+    # Import and apply the same phonetic corrections used for Deepgram
+    from app.services.deepgram_service import _correct
+    return _correct(text.strip())

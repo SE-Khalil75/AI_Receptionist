@@ -18,13 +18,14 @@ class Settings(BaseSettings):
 
     # App
     public_base_url: str = "http://localhost:8000"
+    frontend_base_url: str = "http://localhost:3000"
 
     # ElevenLabs TTS
     elevenlabs_api_key: str
     elevenlabs_voice_id: str = "JBFqnCBsd6RMkjVDRTpX"  # default: "George" – change in .env
 
     # Model config
-    agent_llm_model: str = "gpt-4o"
+    agent_llm_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
     whisper_model: str = "whisper-1"
 
@@ -34,7 +35,7 @@ class Settings(BaseSettings):
 
     # Audio processing
     silence_threshold: float = 150.0      # RMS energy below this = silence
-    silence_frames_needed: int = 100      # consecutive silent 20ms frames → end of speech (100 × 20ms = 2 s)
+    silence_frames_needed: int = 30       # consecutive silent 20ms frames → end of speech (30 × 20ms = 600 ms)
     min_speech_frames: int = 4            # ignore very short utterances
 
     # Single-Business config: UUID of the one company row in Supabase

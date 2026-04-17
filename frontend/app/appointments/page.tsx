@@ -13,6 +13,15 @@ const STATUS_BADGE: Record<string, string> = {
   no_show:              "badge-red",
 };
 
+const STATUSES = [
+  { value: "",                     label: "All Statuses" },
+  { value: "pending_confirmation", label: "Pending" },
+  { value: "confirmed",            label: "Confirmed" },
+  { value: "cancelled",            label: "Cancelled" },
+  { value: "rescheduled",          label: "Rescheduled" },
+  { value: "completed",            label: "Completed" },
+];
+
 export default function AppointmentsPage() {
   const [statusFilter, setStatusFilter] = useState("");
 
@@ -28,79 +37,175 @@ export default function AppointmentsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Appointments</h1>
+    <div className="stagger space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <div
+            style={{
+              fontFamily: 'var(--font-jetbrains)',
+              fontSize: '11px',
+              color: 'var(--amber)',
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              marginBottom: '8px',
+            }}
+          >
+            Schedule
+          </div>
+          <h1
+            style={{
+              fontFamily: 'var(--font-syne)',
+              fontSize: '28px',
+              fontWeight: '700',
+              color: 'var(--text-primary)',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            Appointments
+          </h1>
+        </div>
 
-      {/* Filter */}
-      <div className="flex flex-wrap gap-3">
-        <select
-          className="input w-auto"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">All statuses</option>
-          <option value="pending_confirmation">Pending Confirmation</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="cancelled">Cancelled</option>
-          <option value="rescheduled">Rescheduled</option>
-          <option value="completed">Completed</option>
-        </select>
+        {/* Filter */}
+        <div className="flex items-center gap-2" style={{ marginTop: '4px' }}>
+          <div style={{ position: 'relative' }}>
+            <select
+              className="input pr-8"
+              style={{ appearance: 'none', cursor: 'pointer', minWidth: '160px' }}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              {STATUSES.map(s => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+            <svg
+              width="12" height="12" viewBox="0 0 12 12" fill="none"
+              style={{
+                position: 'absolute', right: '10px', top: '50%',
+                transform: 'translateY(-50%)', color: 'var(--text-dim)',
+                pointerEvents: 'none',
+              }}
+            >
+              <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* Count summary */}
+      <div
+        style={{
+          fontFamily: 'var(--font-jetbrains)',
+          fontSize: '12px',
+          color: 'var(--text-dim)',
+        }}
+      >
+        {data ? `${data.length} appointment${data.length !== 1 ? 's' : ''} found` : 'Loading…'}
       </div>
 
       {/* Table */}
-      <div className="card overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              {["Customer", "Phone", "Email", "Service", "Scheduled", "Duration", "Status", ""].map(
-                (h) => (
-                  <th
-                    key={h}
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide"
-                  >
-                    {h}
-                  </th>
-                )
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {data?.length === 0 && (
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table">
+            <thead>
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
-                  No appointments found.
-                </td>
+                {["Customer", "Phone", "Email", "Service", "Scheduled", "Duration", "Status", ""].map(h => (
+                  <th key={h}>{h}</th>
+                ))}
               </tr>
-            )}
-            {data?.map((a: any) => (
-              <tr key={a.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium">{a.customer_name}</td>
-                <td className="px-4 py-3 text-gray-500">{a.customer_phone}</td>
-                <td className="px-4 py-3 text-gray-500">{a.customer_email || "—"}</td>
-                <td className="px-4 py-3 text-gray-500">{a.service || "—"}</td>
-                <td className="px-4 py-3 whitespace-nowrap">
-                  {format(new Date(a.scheduled_at), "MMM d, yyyy HH:mm")}
-                </td>
-                <td className="px-4 py-3">{a.duration_minutes} min</td>
-                <td className="px-4 py-3">
-                  <span className={STATUS_BADGE[a.status] ?? "badge-gray"}>
-                    {a.status?.replace(/_/g, " ")}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  {(a.status === "confirmed" || a.status === "pending_confirmation") && (
-                    <button
-                      className="text-xs text-red-600 hover:underline"
-                      onClick={() => cancel(a.id)}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data?.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={8}
+                    style={{ padding: '48px', textAlign: 'center', color: 'var(--text-dim)' }}
+                  >
+                    No appointments found.
+                  </td>
+                </tr>
+              )}
+              {data?.map((a: any) => (
+                <tr key={a.id}>
+                  <td className="primary">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div
+                        style={{
+                          width: '24px', height: '24px',
+                          background: 'var(--bg-elevated)',
+                          border: '1px solid var(--border-bright)',
+                          borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '10px', color: 'var(--text-dim)',
+                          fontFamily: 'var(--font-syne)',
+                          fontWeight: '600',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {(a.customer_name?.[0] ?? '?').toUpperCase()}
+                      </div>
+                      {a.customer_name}
+                    </div>
+                  </td>
+                  <td>
+                    <span style={{ fontFamily: 'var(--font-jetbrains)', fontSize: '12px' }}>
+                      {a.customer_phone || "—"}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: '12px' }}>{a.customer_email || "—"}</td>
+                  <td>
+                    {a.service ? (
+                      <span
+                        style={{
+                          background: 'var(--bg-elevated)',
+                          border: '1px solid var(--border-bright)',
+                          borderRadius: '2px',
+                          padding: '2px 6px',
+                          fontSize: '11px',
+                          fontFamily: 'var(--font-outfit)',
+                          color: 'var(--text-secondary)',
+                        }}
+                      >
+                        {a.service}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td>
+                    <span style={{ fontFamily: 'var(--font-jetbrains)', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                      {format(new Date(a.scheduled_at), "MMM d, yyyy")}
+                    </span>
+                    <br />
+                    <span style={{ fontFamily: 'var(--font-jetbrains)', fontSize: '11px', color: 'var(--text-dim)' }}>
+                      {format(new Date(a.scheduled_at), "HH:mm")}
+                    </span>
+                  </td>
+                  <td>
+                    <span style={{ fontFamily: 'var(--font-jetbrains)', fontSize: '12px' }}>
+                      {a.duration_minutes}m
+                    </span>
+                  </td>
+                  <td>
+                    <span className={STATUS_BADGE[a.status] ?? "badge-gray"}>
+                      {a.status?.replace(/_/g, " ")}
+                    </span>
+                  </td>
+                  <td>
+                    {(a.status === "confirmed" || a.status === "pending_confirmation") && (
+                      <button
+                        className="btn-danger"
+                        style={{ padding: '4px 10px', fontSize: '11px' }}
+                        onClick={() => cancel(a.id)}
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

@@ -36,9 +36,20 @@ _call_store: dict[str, dict] = {}
 # Live event bus: call_sid → list of subscriber queues (one per SSE client)
 _live_queues: dict[str, list[asyncio.Queue]] = {}
 
+# Event replay buffer: call_sid → list of past events (so late SSE subscribers catch up)
+_call_event_buffer: dict[str, list[dict]] = {}
+_EVENT_BUFFER_MAX = 100
+
 
 async def _publish_call_event(call_sid: str, event: dict) -> None:
-    """Broadcast an event to all SSE subscribers for this call."""
+    """Broadcast an event to all SSE subscribers and append to replay buffer."""
+    # Append to replay buffer (skip ping events)
+    if event.get("type") != "ping":
+        buf = _call_event_buffer.setdefault(call_sid, [])
+        buf.append(event)
+        if len(buf) > _EVENT_BUFFER_MAX:
+            buf.pop(0)
+    # Push to live subscribers
     for q in _live_queues.get(call_sid, []):
         await q.put(event)
 
@@ -111,6 +122,11 @@ async def status_callback(request: Request):
         )
 
     _call_store.pop(call_sid, None)
+    # Clean up event buffer 30 s after call ends (leave it briefly for late SSE connects)
+    async def _cleanup_buffer():
+        await asyncio.sleep(30)
+        _call_event_buffer.pop(call_sid, None)
+    asyncio.create_task(_cleanup_buffer())
     return Response(content="", status_code=204)
 
 
@@ -147,11 +163,22 @@ async def live_call_stream(call_sid: str):
         ping        – keepalive (every 15 s)
     """
     queue: asyncio.Queue = asyncio.Queue()
+
+    # Snapshot buffered events BEFORE registering the queue, so we don't
+    # double-deliver any event that arrives between the snapshot and registration.
+    past_events = list(_call_event_buffer.get(call_sid, []))
     _live_queues.setdefault(call_sid, []).append(queue)
 
     async def generate():
         try:
             yield f"data: {json.dumps({'type': 'connected', 'call_sid': call_sid})}\n\n"
+
+            # Replay missed events to the late subscriber
+            for evt in past_events:
+                yield f"data: {json.dumps(evt)}\n\n"
+                if evt.get("type") == "call_ended":
+                    return
+
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -213,15 +240,36 @@ async def media_stream(websocket: WebSocket, call_sid: str):
 
     async def send_audio(mulaw_bytes: bytes) -> None:
         payload = base64.b64encode(mulaw_bytes).decode()
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "media",
-                    "streamSid": stream_sid,
-                    "media": {"payload": payload},
-                }
+        try:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "media",
+                        "streamSid": stream_sid,
+                        "media": {"payload": payload},
+                    }
+                )
             )
-        )
+        except (WebSocketDisconnect, RuntimeError):
+            raise WebSocketDisconnect(code=1006)
+
+    async def send_silence(duration_ms: int = 500) -> None:
+        """Send μ-law silence to keep the Twilio WebSocket alive during processing."""
+        # μ-law silence byte is 0xFF; Twilio expects 160-byte chunks (20 ms @ 8 kHz)
+        chunk_size = 160
+        num_chunks = (duration_ms // 20)
+        silence_chunk = base64.b64encode(bytes([0xFF] * chunk_size)).decode()
+        payload = json.dumps({
+            "event": "media",
+            "streamSid": stream_sid,
+            "media": {"payload": silence_chunk},
+        })
+        try:
+            for _ in range(num_chunks):
+                await websocket.send_text(payload)
+                await asyncio.sleep(0.02)
+        except (WebSocketDisconnect, RuntimeError):
+            raise WebSocketDisconnect(code=1006)
 
     def _set_listen_cooldown(mulaw_bytes: bytes, extra_seconds: float = 0.5) -> None:
         """Block VAD triggering for the audio playback duration plus a small buffer."""
@@ -233,33 +281,48 @@ async def media_stream(websocket: WebSocket, call_sid: str):
         """Transcribe → agent → TTS → send. Returns True if call should end."""
         nonlocal processing
         processing = True
+        keep_alive_task: Optional[asyncio.Task] = None
         try:
+            # Send silence every 4 s so Twilio doesn't close the WebSocket.
+            async def _keep_alive():
+                while True:
+                    await asyncio.sleep(4)
+                    await send_silence(200)
+
+            keep_alive_task = asyncio.create_task(_keep_alive())
+
+            # ── STT ───────────────────────────────────────────────────────────
             transcript = await asyncio.to_thread(stt_service.transcribe, mulaw_data)
             if not transcript:
                 return False
 
             logger.info("[%s] Customer: %s", call_sid, transcript)
             await _publish_call_event(call_sid, {"type": "customer", "text": transcript})
-
             await _publish_call_event(call_sid, {"type": "thinking"})
-            agent_text, should_end = await asyncio.to_thread(
-                agent.process_turn, transcript
-            )
+
+            # ── LLM ───────────────────────────────────────────────────────────
+            agent_text, should_end = await agent.process_turn(transcript)
 
             if agent_text:
                 logger.info("[%s] Agent: %s", call_sid, agent_text)
-                mulaw_response = await asyncio.to_thread(
-                    tts_service.synthesize_mulaw, agent_text
+
+                # ── TTS (runs concurrently with publishing the text event) ───
+                mulaw_response, _ = await asyncio.gather(
+                    asyncio.to_thread(tts_service.synthesize_mulaw, agent_text),
+                    _publish_call_event(call_sid, {"type": "agent", "text": agent_text}),
                 )
                 await send_audio(mulaw_response)
-                await _publish_call_event(call_sid, {"type": "agent", "text": agent_text})
                 _set_listen_cooldown(mulaw_response)
 
             return should_end
+        except WebSocketDisconnect:
+            raise  # let the outer loop handle it
         except Exception as exc:
             logger.exception("Error processing utterance: %s", exc)
             return False
         finally:
+            if keep_alive_task:
+                keep_alive_task.cancel()
             processing = False
 
     # ── main receive loop ─────────────────────────────────────────────────────
@@ -368,7 +431,10 @@ async def media_stream(websocket: WebSocket, call_sid: str):
             if agent.appointment_id:
                 await asyncio.to_thread(_send_post_call_email, agent.appointment_id)
 
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
         logger.info("WebSocket closed for call %s", call_sid)
 
 
@@ -393,7 +459,7 @@ def _send_post_call_email(appointment_id: str) -> None:
 
     try:
         scheduled_dt = datetime.fromisoformat(appt["scheduled_at"])
-        scheduled_display = scheduled_dt.strftime("%A, %B %-d at %-I:%M %p")
+        scheduled_display = scheduled_dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
     except (ValueError, TypeError, KeyError):
         scheduled_display = appt.get("scheduled_at", "")
 

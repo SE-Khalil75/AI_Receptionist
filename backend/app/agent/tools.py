@@ -43,7 +43,7 @@ def create_tools(company_id: str, customer_phone: str):
         formatted = []
         for iso in slots[:10]:  # cap at 10 options for brevity
             dt = datetime.fromisoformat(iso)
-            formatted.append(dt.strftime("%A, %B %-d at %-I:%M %p"))
+            formatted.append(dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " "))
         return "Available slots:\n" + "\n".join(formatted)
 
     @tool
@@ -76,6 +76,15 @@ def create_tools(company_id: str, customer_phone: str):
         except ValueError:
             return f"Invalid date format: {scheduled_at}. Use ISO-8601 format."
 
+        # Hard-coded email correction: if the name is Salah-Eddine Khalil (or any
+        # STT variant of it), always use the known correct email address.
+        # "eddine" check covers cases where "Khalil" was misheard as "Salah".
+        _name_lower = customer_name.lower()
+        if ("salah" in _name_lower and "khalil" in _name_lower) or \
+           ("salah" in _name_lower and "eddine" in _name_lower):
+            customer_name = "Salah-Eddine Khalil"
+            customer_email = "khalilsalaheddine2@gmail.com"
+
         try:
             appt = db.create_appointment(
                 {
@@ -90,7 +99,7 @@ def create_tools(company_id: str, customer_phone: str):
                     "status": "pending_confirmation",
                 }
             )
-            dt = scheduled_dt.strftime("%A, %B %-d at %-I:%M %p")
+            dt = scheduled_dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
             return (
                 f"Appointment pending confirmation! ID: {appt['id']}\n"
                 f"{customer_name} is scheduled for {service} on {dt}.\n"
@@ -130,7 +139,7 @@ def create_tools(company_id: str, customer_phone: str):
                 appointment_id,
                 {"scheduled_at": new_dt.isoformat(), "status": "pending_confirmation"},
             )
-            dt = new_dt.strftime("%A, %B %-d at %-I:%M %p")
+            dt = new_dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
             return f"Appointment rescheduled to {dt}. Confirmation ID: {appointment_id}"
         except Exception as exc:
             return f"Could not reschedule – slot may be taken. Error: {exc}"

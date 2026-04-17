@@ -30,13 +30,23 @@ from app.services import supabase_service as db
 DEFAULT_SYSTEM_PROMPT = """You are a professional AI receptionist. Your job is to:
 1. Greet callers warmly and identify their needs.
 2. Answer questions about the business using the knowledge base (always search first).
-3. Book, reschedule, or cancel appointments when requested.
-   - When booking, ALWAYS ask for the customer's email address before calling book_appointment.
-   - After booking, tell the customer: a confirmation email will be sent; they must click Confirm to finalise.
-4. Be concise – this is a phone call. Keep responses under 3 sentences unless listing options.
-5. When the conversation is complete, say a polite farewell and call end_call_gracefully.
+3. Book appointments when requested using this STRICT sequence:
+   a. Collect all four pieces: full name, service, date/time, email address.
+   b. The moment you have all four, your VERY NEXT action must be a book_appointment tool call.
+      Do NOT say anything to the caller before making that tool call.
+   c. After book_appointment returns successfully, tell the caller their appointment is pending
+      and a confirmation email will be sent — they must click Confirm to finalise.
+   d. Then ask: "Is there anything else I can help you with today?" and wait for their reply.
+   e. Only after the caller says they are done, call end_call_gracefully with a warm farewell.
 
-Always be polite, professional, and helpful. If you cannot help, offer to have a human call back."""
+   *** FORBIDDEN until book_appointment has been called and returned: ***
+   - Any goodbye, "have a great day", "take care", or farewell phrase
+   - Calling end_call_gracefully
+   - Saying the appointment is booked (it is NOT booked until the tool is called)
+
+4. Be concise – this is a phone call. Keep responses under 3 sentences unless listing options.
+
+Always be polite, warm, and helpful. If you cannot help, offer to have a human call back."""
 
 
 TEXT_MODE_SUFFIX = """
@@ -76,7 +86,7 @@ def build_graph(
         temperature=0.3,
     ).bind_tools(tools)
 
-    today = datetime.now(timezone.utc).strftime("%A, %B %-d, %Y")
+    today = datetime.now(timezone.utc).strftime("%A, %B %d, %Y").replace(" 0", " ")
     system_prompt = (
         f"You are the AI receptionist for {company_name}.\n"
         f"Today's date is {today}.\n\n"
@@ -84,9 +94,9 @@ def build_graph(
         + (TEXT_MODE_SUFFIX if text_mode else "")
     )
 
-    def agent_node(state: AgentState) -> dict:
+    async def agent_node(state: AgentState) -> dict:
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
-        response: AIMessage = llm.invoke(messages)
+        response: AIMessage = await llm.ainvoke(messages)
 
         # Detect end-call signal in tool results already in state
         should_end = state.get("should_end_call", False)
@@ -114,10 +124,10 @@ def build_graph(
             return "tools"
         return "__end__"
 
-    def tool_node_wrapper(state: AgentState) -> dict:
+    async def tool_node_wrapper(state: AgentState) -> dict:
         """Run tools and detect the end-call signal in results."""
         tool_node = ToolNode(tools)
-        result = tool_node.invoke(state)
+        result = await tool_node.ainvoke(state)
 
         # Check for end-call token in any tool message
         should_end = state.get("should_end_call", False)
@@ -195,7 +205,7 @@ class ReceptionistAgent:
             text_mode=text_mode,
         )
 
-    def process_turn(self, user_text: str) -> tuple[str, bool]:
+    async def process_turn(self, user_text: str) -> tuple[str, bool]:
         """
         Process one conversational turn.
         Returns (agent_response_text, should_end_call).
@@ -203,7 +213,7 @@ class ReceptionistAgent:
         self.state["messages"].append(HumanMessage(content=user_text))
         self.state["transcript_lines"].append(f"Customer: {user_text}")
 
-        result = self.graph.invoke(self.state)
+        result = await self.graph.ainvoke(self.state)
         self.state = result  # update state with new messages + flags
 
         # Extract the last AI text response

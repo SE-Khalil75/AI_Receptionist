@@ -15,7 +15,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.services import supabase_service as db
 from app.services.email_service import verify_token
@@ -26,38 +26,54 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/confirm", tags=["confirm"])
 
 
-def _html_response(title: str, heading: str, body: str, color: str = "#1a56db") -> HTMLResponse:
-    html = f"""
-<!DOCTYPE html>
-<html>
+def _html_response(title: str, heading: str, body: str, color: str = "#16a34a", icon: str = "✓") -> HTMLResponse:
+    html = f"""<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>{title}</title>
-  <style>
-    body {{ font-family: Arial, sans-serif; background:#f9f9f9; margin:0; padding:0; }}
-    .box {{ max-width:480px; margin:80px auto; background:#fff; border-radius:8px;
-            box-shadow:0 2px 8px rgba(0,0,0,.1); padding:48px; text-align:center; }}
-    h1 {{ color:{color}; font-size:24px; margin-bottom:12px; }}
-    p  {{ color:#555; font-size:16px; line-height:1.6; }}
-  </style>
 </head>
-<body>
-  <div class="box">
-    <h1>{heading}</h1>
-    <p>{body}</p>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;">
+  <div style="width:100%;max-width:440px;margin:24px;background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:48px 40px;text-align:center;box-sizing:border-box;">
+    <div style="width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.05);border:1px solid {color}44;margin:0 auto 28px;display:flex;align-items:center;justify-content:center;font-size:30px;line-height:1;">
+      {icon}
+    </div>
+    <h1 style="margin:0 0 14px;font-size:22px;font-weight:700;color:{color};letter-spacing:-0.02em;">{heading}</h1>
+    <p style="margin:0 0 36px;font-size:15px;color:#9ca3af;line-height:1.7;">{body}</p>
+    <p style="margin:0;font-size:12px;color:#374151;">AI Receptionist &middot; AppointEase</p>
   </div>
 </body>
-</html>
-"""
+</html>"""
     return HTMLResponse(content=html)
 
 
-@router.get("/{appointment_id}", response_class=HTMLResponse)
+@router.get("/{appointment_id}")
 def handle_confirmation(
     appointment_id: str,
     action: str = Query(..., pattern="^(confirm|cancel)$"),
     token: str = Query(...),
+    fmt: str = Query(default="html", alias="format"),
 ):
+    try:
+        return _handle(appointment_id, action, token, fmt)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error in confirm handler: %s", exc)
+        if fmt == "json":
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"status": "error", "detail": str(exc)}, status_code=500)
+        return _html_response(
+            "Error",
+            "Something went wrong",
+            f"An unexpected error occurred. Please try again or contact support.<br>"
+            f"<span style='font-size:12px;color:#4b5563'>{exc}</span>",
+            color="#f59e0b", icon="!",
+        )
+
+
+def _handle(appointment_id: str, action: str, token: str, fmt: str):
     # Verify HMAC token
     if not verify_token(appointment_id, action, token):
         raise HTTPException(status_code=400, detail="Invalid or expired confirmation link.")
@@ -70,17 +86,25 @@ def handle_confirmation(
 
     # Idempotency: already processed
     if action == "confirm" and status == "confirmed":
+        if fmt == "json":
+            return JSONResponse({"status": "already_confirmed", "action": "confirm",
+                                 "customer_name": appt.get("customer_name"),
+                                 "service": appt.get("service"),
+                                 "scheduled_at": appt.get("scheduled_at"),
+                                 "duration_minutes": appt.get("duration_minutes")})
         return _html_response(
             "Already Confirmed",
-            "Already Confirmed",
-            "Your appointment has already been confirmed. We look forward to seeing you!",
+            "Already Confirmed ✓",
+            "Your appointment has already been confirmed.<br>We look forward to seeing you!",
         )
     if action == "cancel" and status == "cancelled":
+        if fmt == "json":
+            return JSONResponse({"status": "already_cancelled", "action": "cancel"})
         return _html_response(
             "Already Cancelled",
             "Already Cancelled",
             "This appointment was already cancelled.",
-            color="#e02424",
+            color="#ef4444", icon="✗",
         )
 
     if action == "confirm":
@@ -116,28 +140,41 @@ def handle_confirmation(
             )
 
         if cal_event_id:
-            db.update_appointment(appointment_id, {"metadata": {"calendar_event_id": cal_event_id}})
+            logger.info("Google Calendar event created: %s for appointment %s", cal_event_id, appointment_id)
 
-        scheduled_display = start_dt.strftime("%A, %B %-d at %-I:%M %p") if start_dt else scheduled_at
+        scheduled_display = start_dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ") if start_dt else scheduled_at
         logger.info("Appointment %s confirmed by customer.", appointment_id)
 
+        if fmt == "json":
+            return JSONResponse({
+                "status": "confirmed",
+                "action": "confirm",
+                "customer_name": customer_name,
+                "service": service,
+                "scheduled_at": appt.get("scheduled_at"),
+                "scheduled_display": scheduled_display,
+                "duration_minutes": duration,
+                "business_name": business_name,
+            })
         return _html_response(
             "Appointment Confirmed",
             "Appointment Confirmed!",
-            f"Thank you, <strong>{customer_name}</strong>!<br><br>"
-            f"Your appointment for <strong>{service}</strong> on "
-            f"<strong>{scheduled_display}</strong> is confirmed.<br><br>"
-            f"We look forward to seeing you at {business_name}.",
+            f"Thank you, <strong style='color:#f3f4f6'>{customer_name}</strong>!<br><br>"
+            f"<strong style='color:#f3f4f6'>{service}</strong><br>"
+            f"<span style='color:#6b7280;font-size:13px'>{scheduled_display} &middot; {duration} min &middot; {business_name}</span>",
         )
 
     else:  # cancel
         db.update_appointment(appointment_id, {"status": "cancelled"})
         logger.info("Appointment %s cancelled by customer.", appointment_id)
 
+        if fmt == "json":
+            return JSONResponse({"status": "cancelled", "action": "cancel",
+                                 "customer_name": appt.get("customer_name"),
+                                 "service": appt.get("service")})
         return _html_response(
             "Appointment Cancelled",
             "Appointment Cancelled",
-            "Your appointment has been cancelled. "
-            "Please call us if you would like to reschedule.",
-            color="#e02424",
+            "Your appointment has been cancelled.<br>Please call us if you'd like to reschedule.",
+            color="#ef4444", icon="✗",
         )

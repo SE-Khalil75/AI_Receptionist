@@ -1,33 +1,35 @@
 """
-Text-to-speech via the OpenAI TTS API.
+Text-to-speech via OpenAI TTS API.
 
-OpenAI returns MP3 audio. Twilio Media Streams requires 8-bit μ-law
-at 8 kHz. We use pydub (ffmpeg) to resample and audioop (stdlib) to
-encode μ-law — both are single function calls, no custom DSP.
+OpenAI TTS returns MP3 audio. Twilio Media Streams requires 8-bit μ-law
+at 8 kHz. We use pydub (ffmpeg) to resample and audioop (stdlib) to encode.
 """
 from __future__ import annotations
 
 import audioop
 import io
+import os
 
-from openai import OpenAI
 from pydub import AudioSegment
 
 from app.config import settings
 
-
-def _client() -> OpenAI:
-    return OpenAI(api_key=settings.openai_api_key)
+# Add ffmpeg bin dir to PATH so pydub can find ffmpeg and ffprobe (Windows WinGet install)
+_FFMPEG_BIN = r"C:\Users\SalahEddineKhalil\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin"
+if os.path.isdir(_FFMPEG_BIN) and _FFMPEG_BIN not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _FFMPEG_BIN + os.pathsep + os.environ.get("PATH", "")
 
 
 # ── OpenAI TTS call ───────────────────────────────────────────────────────────
 
 def synthesize_to_mp3(text: str) -> bytes:
-    """Call the OpenAI TTS API and return raw MP3 bytes."""
-    client = _client()
+    """Call OpenAI TTS and return raw MP3 bytes."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=settings.openai_api_key)
     response = client.audio.speech.create(
-        model="tts-1",          # tts-1 = low latency, tts-1-hd = higher quality
-        voice="nova",           # options: alloy, echo, fable, onyx, nova, shimmer
+        model="tts-1",       # tts-1 has lower latency; tts-1-hd for higher quality
+        voice="nova",        # nova: friendly, professional female voice
         input=text,
         response_format="mp3",
     )

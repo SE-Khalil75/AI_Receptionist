@@ -23,8 +23,11 @@ def get_business_company() -> Optional[dict]:
     return companies[0] if companies else None
 
 
+_client: Client = create_client(settings.supabase_url, settings.supabase_service_key)
+
+
 def _get_client() -> Client:
-    return create_client(settings.supabase_url, settings.supabase_service_key)
+    return _client
 
 
 def _openai() -> OpenAI:
@@ -217,13 +220,13 @@ def create_appointment(data: dict) -> dict:
 
 def update_appointment(appointment_id: str, data: dict) -> dict:
     db = _get_client()
-    return (
+    result = (
         db.table("appointments")
         .update(data)
         .eq("id", appointment_id)
         .execute()
-        .data[0]
     )
+    return result.data[0] if result.data else {}
 
 
 def get_appointment_by_phone(company_id: str, phone: str) -> Optional[dict]:

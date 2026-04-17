@@ -14,12 +14,20 @@ def _get_service():
     from app.config import settings
 
     creds_file = settings.google_calendar_credentials_file
-    if not creds_file or not os.path.exists(creds_file):
+    if not creds_file:
+        logger.warning("GOOGLE_CALENDAR_CREDENTIALS_FILE not set – calendar integration disabled.")
+        return None
+    # Resolve relative paths from the backend directory
+    if not os.path.isabs(creds_file):
+        creds_file = os.path.join(os.path.dirname(__file__), "..", "..", creds_file)
+        creds_file = os.path.normpath(creds_file)
+    if not os.path.exists(creds_file):
         logger.warning(
-            "Google Calendar credentials file not found (%s) – calendar integration disabled.",
+            "Google Calendar credentials file not found at '%s' – calendar integration disabled.",
             creds_file,
         )
         return None
+    logger.info("Using Google Calendar credentials: %s", creds_file)
 
     try:
         from google.oauth2 import service_account

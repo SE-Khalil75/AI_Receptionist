@@ -34,7 +34,7 @@ class TestRequest(BaseModel):
 
 
 @router.post("/agent")
-def test_agent(req: TestRequest):
+async def test_agent(req: TestRequest):
     Business = db.get_business_company()
     if not Business:
         raise HTTPException(status_code=503, detail="Business not configured. Set COMPANY_ID in .env")
@@ -52,7 +52,7 @@ def test_agent(req: TestRequest):
     agent = _sessions[session_key]
 
     try:
-        response_text, should_end = agent.process_turn(req.message)
+        response_text, should_end = await agent.process_turn(req.message)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -87,7 +87,7 @@ def _send_confirmation_email(appointment_id: str) -> None:
     business_name = business["name"] if business else "Our Business"
 
     try:
-        scheduled_display = datetime.fromisoformat(appt["scheduled_at"]).strftime("%A, %B %-d at %-I:%M %p")
+        scheduled_display = datetime.fromisoformat(appt["scheduled_at"]).strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
     except (ValueError, TypeError, KeyError):
         scheduled_display = appt.get("scheduled_at", "")
 
