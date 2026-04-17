@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Required for the optimised Docker standalone build
+  output: "standalone",
+
   async rewrites() {
     return [
       {
